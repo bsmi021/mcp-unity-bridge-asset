@@ -1,0 +1,19 @@
+{
+    "name": "com.bsmi021.mcp-unity-bridge",
+    "rootNamespace": "BSMI021.MCPUnityBridge",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [
+        "websocket-sharp.dll",
+        "Newtonsoft.Json.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

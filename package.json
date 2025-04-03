@@ -1,0 +1,26 @@
+{
+    "name": "com.bsmi021.mcp-unity-bridge",
+    "version": "0.1.0",
+    "displayName": "BSMI MCP Unity Bridge",
+    "description": "C# component for Unity Editor that acts as a bridge, receiving commands from an MCP server (like mcp-unity-manager-server) via WebSockets and executing Unity Editor API calls.",
+    "unity": "2022.3",
+    "documentationUrl": "https://github.com/bsmi021/mcp-unity-bridge-asset/blob/main/README.md",
+    "changelogUrl": "https://github.com/bsmi021/mcp-unity-bridge-asset/blob/main/CHANGELOG.md",
+    "licensesUrl": "https://github.com/bsmi021/mcp-unity-bridge-asset/blob/main/LICENSE",
+    "dependencies": {},
+    "keywords": [
+        "mcp",
+        "model context protocol",
+        "unity",
+        "editor",
+        "automation",
+        "llm",
+        "cline",
+        "bsmi021"
+    ],
+    "author": {
+        "name": "bsmi021",
+        "url": "https://github.com/bsmi021"
+    },
+    "type": "tool"
+}
