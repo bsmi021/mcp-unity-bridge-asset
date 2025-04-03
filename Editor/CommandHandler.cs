@@ -130,6 +130,9 @@ namespace BSMI021.MCPUnityBridge
             // Safely convert to bool, default to false if missing or invalid
             bool force = forceObj is bool b ? b : false;
 
+            // Extract source GameObject identifier (for create_prefab)
+            Dictionary<string, object> sourceGoIdentifierDict = GetNestedParams(parameters, "source_gameobject_identifier");
+
 
             // 3. Switch based on action
             try
@@ -608,6 +611,59 @@ namespace BSMI021.MCPUnityBridge
 
                         Debug.Log(LOG_PREFIX + $"Found {usagePaths.Count} usage(s) for asset '{path}'.");
                         return CommandResponse.Success($"Found {usagePaths.Count} usage(s) for asset '{path}'.", new Dictionary<string, object> { { "path", path }, { "guid", targetGuid }, { "usages", usagePaths } }, correlationId);
+
+                    case "create_prefab":
+                        if (string.IsNullOrEmpty(path)) return CommandResponse.Error("Missing 'path' parameter for create_prefab action.", correlationId: correlationId);
+                        if (!path.ToLowerInvariant().EndsWith(".prefab")) return CommandResponse.Error("Invalid 'path' for create_prefab action. Must end with '.prefab'.", correlationId: correlationId);
+                        if (sourceGoIdentifierDict == null) return CommandResponse.Error("Missing 'source_gameobject_identifier' parameter for create_prefab action.", correlationId: correlationId);
+
+                        // Find source GameObject
+                        GameObject sourceGo = FindGameObjectByIdentifier(sourceGoIdentifierDict);
+                        if (sourceGo == null)
+                        {
+                            string identifierDesc = sourceGoIdentifierDict.ContainsKey("instance_id") ? $"instance ID {sourceGoIdentifierDict["instance_id"]}"
+                                                    : sourceGoIdentifierDict.ContainsKey("path") ? $"path '{sourceGoIdentifierDict["path"]}'"
+                                                    : sourceGoIdentifierDict.ContainsKey("name") ? $"name '{sourceGoIdentifierDict["name"]}'"
+                                                    : "the specified criteria";
+                            return CommandResponse.Error($"Source GameObject not found matching {identifierDesc} for create_prefab action.", correlationId: correlationId);
+                        }
+
+                        // Validate prefab path
+                        if (!path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return CommandResponse.Error($"Invalid prefab path format: '{path}'. Must start with 'Assets/'.", correlationId: correlationId);
+                        }
+                        string prefabDir = System.IO.Path.GetDirectoryName(path);
+                        if (!AssetDatabase.IsValidFolder(prefabDir))
+                        {
+                            return CommandResponse.Error($"Target directory does not exist: '{prefabDir}'", correlationId: correlationId);
+                        }
+                        if (AssetDatabase.LoadAssetAtPath<GameObject>(path) != null)
+                        {
+                            return CommandResponse.Error($"Prefab already exists at path: '{path}'", correlationId: correlationId);
+                        }
+
+                        // Create the prefab
+                        try
+                        {
+                            GameObject prefabAsset = PrefabUtility.SaveAsPrefabAssetAndConnect(sourceGo, path, InteractionMode.UserAction, out bool success);
+
+                            if (success && prefabAsset != null)
+                            {
+                                Debug.Log(LOG_PREFIX + $"Created prefab '{path}' from GameObject '{sourceGo.name}'.");
+                                string prefabGuid = AssetDatabase.AssetPathToGUID(path);
+                                return CommandResponse.Success($"Prefab '{path}' created successfully.", new Dictionary<string, object> { { "path", path }, { "guid", prefabGuid } }, correlationId);
+                            }
+                            else
+                            {
+                                return CommandResponse.Error($"Failed to create prefab at '{path}'. PrefabUtility.SaveAsPrefabAssetAndConnect returned failure.", correlationId: correlationId);
+                            }
+                        }
+                        catch (Exception prefabEx)
+                        {
+                             Debug.LogError(LOG_PREFIX + $"Exception during prefab creation for '{sourceGo.name}' at path '{path}': {prefabEx.Message}\n{prefabEx.StackTrace}");
+                             return CommandResponse.Error($"Error creating prefab '{path}': {prefabEx.Message}", correlationId: correlationId);
+                        }
 
 
                     default:
