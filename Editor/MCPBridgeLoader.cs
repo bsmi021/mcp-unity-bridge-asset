@@ -6,6 +6,10 @@ using System;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq; // Added for JObject
 using System.Collections.Generic;
+using System.Net.NetworkInformation;
+using System.IO;
+using System.Diagnostics;
+using Debug = UnityEngine.Debug; // Explicit Debug reference to avoid confusion
 
 namespace BSMI021.MCPUnityBridge
 {
@@ -22,71 +26,207 @@ namespace BSMI021.MCPUnityBridge
         // Dictionary to track active connections by their ID
         private static readonly Dictionary<string, MCPBridgeService> activeConnections = new Dictionary<string, MCPBridgeService>();
         private static readonly object connectionLock = new object(); // Lock for thread safety
+        private static bool isServerRunning = false;
+        private static string pidFilePath;
+        private static int currentPort;
 
         // Static constructor called by Unity Editor on load
         static MCPBridgeLoader()
         {
-            // Ensure cleanup happens when scripts are recompiled or editor quits
-            EditorApplication.quitting += StopServer;
-            // AssemblyReloadEvents.beforeAssemblyReload += StopServer; // Consider if needed
+            // Set up PID file path in the temp directory
+            pidFilePath = Path.Combine(Path.GetTempPath(), "mcp_unity_bridge_server.pid");
+            
+            // Check for and clean up any existing zombie servers
+            CleanupZombieServer();
 
+            // Register for domain reload
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
+            EditorApplication.quitting += OnEditorQuitting;
+            
+            // Initial server start
             StartServer();
         }
 
-        public static void StartServer()
+        private static bool IsPortAvailable(int port)
         {
-            if (wsServer != null && wsServer.IsListening)
-            {
-                Debug.LogWarning(LOG_PREFIX + "Server already running.");
-                return;
-            }
-
-            int port = EditorPrefs.GetInt("MCPBridge_Port", DEFAULT_PORT);
-            Debug.Log(LOG_PREFIX + $"Attempting to start WebSocket server on port {port}...");
-
             try
             {
-                // Using 127.0.0.1 to only allow local connections
-                wsServer = new WebSocketServer($"ws://127.0.0.1:{port}");
-
-                // Add the service/behavior that handles incoming connections/messages
-                // We'll define MCPBridgeService later
-                wsServer.AddWebSocketService<MCPBridgeService>("/mcp");
-
-                wsServer.Start();
-
-                if (wsServer.IsListening)
+                // Check if port is already in use by any TCP listener
+                IPGlobalProperties ipGlobalProperties = IPGlobalProperties.GetIPGlobalProperties();
+                var tcpConnInfoArray = ipGlobalProperties.GetActiveTcpListeners();
+                
+                foreach (var endpoint in tcpConnInfoArray)
                 {
-                    Debug.Log(LOG_PREFIX + $"Successfully started. Listening on ws://127.0.0.1:{port}/mcp");
+                    if (endpoint.Port == port)
+                    {
+                        return false;
+                    }
                 }
-                else
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"{LOG_PREFIX}Error checking port availability: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static void CleanupZombieServer()
+        {
+            try
+            {
+                if (File.Exists(pidFilePath))
                 {
-                    Debug.LogError(LOG_PREFIX + "Server failed to start listening.");
-                    wsServer = null; // Ensure server object is null if start failed
+                    string[] pidInfo = File.ReadAllLines(pidFilePath);
+                    if (pidInfo.Length >= 2 && int.TryParse(pidInfo[0], out int pid) && int.TryParse(pidInfo[1], out int port))
+                    {
+                        try
+                        {
+                            Process process = Process.GetProcessById(pid);
+                            // If we get here, the process exists
+                            Debug.LogWarning($"{LOG_PREFIX}Found zombie WebSocket server (PID: {pid}, Port: {port}). Attempting to kill it...");
+                            process.Kill();
+                            process.WaitForExit(3000); // Wait up to 3 seconds for the process to die
+                        }
+                        catch (ArgumentException)
+                        {
+                            // Process not found, which is fine
+                            Debug.Log($"{LOG_PREFIX}No zombie process found with PID: {pid}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"{LOG_PREFIX}Error killing zombie process: {ex.Message}");
+                        }
+                    }
+                    
+                    // Clean up the PID file regardless of what happened above
+                    try
+                    {
+                        File.Delete(pidFilePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"{LOG_PREFIX}Error deleting PID file: {ex.Message}");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError(LOG_PREFIX + $"Failed to start WebSocket server on port {port}. Error: {ex.Message}");
-                Debug.LogError(LOG_PREFIX + $"Is port {port} already in use? Try changing it via Tools > MCP Bridge > Settings.");
-                wsServer = null; // Ensure server object is null on exception
+                Debug.LogError($"{LOG_PREFIX}Error during zombie cleanup: {ex.Message}");
+            }
+        }
+
+        private static void WritePidFile(int port)
+        {
+            try
+            {
+                // Write both the current process ID and port
+                File.WriteAllText(pidFilePath, $"{Process.GetCurrentProcess().Id}\n{port}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"{LOG_PREFIX}Error writing PID file: {ex.Message}");
+            }
+        }
+
+        public static void StartServer()
+        {
+            if (isServerRunning)
+            {
+                Debug.Log($"{LOG_PREFIX}Server is already running.");
+                return;
+            }
+
+            try
+            {
+                currentPort = EditorPrefs.GetInt("MCPBridge_Port", DEFAULT_PORT);
+                
+                // Check if port is available
+                if (!IsPortAvailable(currentPort))
+                {
+                    Debug.LogError($"{LOG_PREFIX}Port {currentPort} is already in use. Please change the port in Tools/MCP Bridge/Settings.");
+                    return;
+                }
+
+                // Create and start the WebSocket server
+                wsServer = new WebSocketServer($"ws://127.0.0.1:{currentPort}");
+                wsServer.AddWebSocketService<MCPBridgeService>("/mcp");
+                wsServer.Start();
+                
+                if (wsServer.IsListening)
+                {
+                    isServerRunning = true;
+                    WritePidFile(currentPort); // Write PID file after successful start
+                    Debug.Log($"{LOG_PREFIX}WebSocket server started on port {currentPort}");
+                }
+                else
+                {
+                    Debug.LogError($"{LOG_PREFIX}Failed to start WebSocket server on port {currentPort}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"{LOG_PREFIX}Error starting WebSocket server: {ex.Message}");
+                isServerRunning = false;
             }
         }
 
         public static void StopServer()
         {
-            if (wsServer != null && wsServer.IsListening)
+            if (!isServerRunning || wsServer == null)
             {
-                Debug.Log(LOG_PREFIX + "Stopping WebSocket server...");
+                return;
+            }
+
+            try
+            {
                 wsServer.Stop();
-                Debug.Log(LOG_PREFIX + "Server stopped.");
+                wsServer = null;
+                isServerRunning = false;
+                
+                // Clean up PID file
+                try
+                {
+                    if (File.Exists(pidFilePath))
+                    {
+                        File.Delete(pidFilePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"{LOG_PREFIX}Error deleting PID file during shutdown: {ex.Message}");
+                }
+                
+                Debug.Log($"{LOG_PREFIX}WebSocket server stopped");
+                // Clear connections on stop
+                lock (connectionLock)
+                {
+                    activeConnections.Clear();
+                }
             }
-            wsServer = null;
-            // Clear connections on stop
-            lock (connectionLock)
+            catch (System.Exception ex)
             {
-                activeConnections.Clear();
+                Debug.LogError($"{LOG_PREFIX}Error stopping WebSocket server: {ex.Message}");
             }
+        }
+
+        private static void OnBeforeAssemblyReload()
+        {
+            // Ensure server is stopped before reload
+            StopServer();
+        }
+
+        private static void OnAfterAssemblyReload()
+        {
+            // Restart server after reload
+            StartServer();
+        }
+
+        private static void OnEditorQuitting()
+        {
+            // Clean up when the editor is closing
+            StopServer();
         }
 
         /// <summary>
@@ -224,7 +364,7 @@ namespace BSMI021.MCPUnityBridge
                 }
             }
 
-            protected override void OnError(ErrorEventArgs e)
+            protected override void OnError(WebSocketSharp.ErrorEventArgs e)
             {
                 Debug.LogError(LOG_PREFIX + $"WebSocket Error: {e.Message}");
             }

@@ -917,10 +917,45 @@ namespace BSMI021.MCPUnityBridge
 
 
                     case "find":
-                        if (identifierDict == null)
+                        // --- BEGIN RFC-2025-011 IMPLEMENTATION ---
+                        // Check if a specific identifier was provided.
+                        bool hasSpecificIdentifier = identifierDict != null &&
+                                                     (identifierDict.ContainsKey("instance_id") ||
+                                                      (identifierDict.ContainsKey("path") && !string.IsNullOrEmpty(identifierDict["path"] as string)) ||
+                                                      (identifierDict.ContainsKey("name") && !string.IsNullOrEmpty(identifierDict["name"] as string)));
+
+                        if (!hasSpecificIdentifier)
                         {
-                            return CommandResponse.Error("Missing 'identifier' parameter for find action.", correlationId: correlationId);
+                            // No specific identifier, list root GameObjects
+                            Debug.Log(LOG_PREFIX + $"Handling 'find' action to list root objects (ID: {correlationId}).");
+                            try
+                            {
+                                GameObject[] rootObjects = SceneManager.GetActiveScene().GetRootGameObjects();
+                                if (rootObjects == null || rootObjects.Length == 0)
+                                {
+                                    return CommandResponse.Success("No root GameObjects found in the active scene.", new List<object>(), correlationId);
+                                }
+
+                                // Serialize the found root objects
+                                var rootData = new List<object>();
+                                foreach (var rootGo in rootObjects)
+                                {
+                                     // Using basic serialization as GetGameObjectData helper wasn't found in this specific file context
+                                     rootData.Add(new { name = rootGo.name, instance_id = rootGo.GetInstanceID() });
+                                }
+
+                                return CommandResponse.Success($"Found {rootObjects.Length} root GameObject(s).", rootData, correlationId);
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogError(LOG_PREFIX + $"Error listing root GameObjects: {ex.Message}\n{ex.StackTrace}");
+                                return CommandResponse.Error($"Error listing root GameObjects: {ex.Message}", correlationId: correlationId);
+                            }
                         }
+                        // --- END RFC-2025-011 IMPLEMENTATION ---
+
+                        // --- Existing 'find' logic (if specific identifier was provided) ---
+                        // If we reach here, it means hasSpecificIdentifier was true, so identifierDict is NOT null.
 
                         // Use the helper to find the GameObject
                         GameObject foundGo = FindGameObjectByIdentifier(identifierDict);
@@ -946,6 +981,7 @@ namespace BSMI021.MCPUnityBridge
                             // Could add tag, layer, path, etc. here if useful
                         };
                         return CommandResponse.Success($"GameObject '{foundGo.name}' found.", foundData, correlationId);
+                        // --- End of existing 'find' logic ---
 
 
                     case "modify":

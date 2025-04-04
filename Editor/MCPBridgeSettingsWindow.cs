@@ -62,17 +62,24 @@ namespace BSMI021.MCPUnityBridge
                 {
                     Debug.Log(LOG_PREFIX + $"Applying new port: {inputPort}");
                     EditorPrefs.SetInt(PORT_PREF_KEY, inputPort);
-                    currentPort = inputPort; // Update displayed current port
-                    EditorUtility.DisplayDialog("MCP Bridge Settings", $"Port updated to {currentPort}. Restarting bridge server...", "OK");
-
-                    // Trigger server restart (implementation in MCPBridgeLoader needed)
-                    // For now, just stop and start - might cause issues if connection active
+                    currentPort = inputPort;
+                    
+                    // Stop the server first
                     MCPBridgeLoader.StopServer();
-                    MCPBridgeLoader.StartServer(); // Attempt to start with new port
+                    
+                    // Small delay to ensure port is released
+                    System.Threading.Thread.Sleep(100);
+                    
+                    // Start with new port
+                    MCPBridgeLoader.StartServer();
+                    
+                    EditorUtility.DisplayDialog("MCP Bridge Settings", 
+                        $"Port updated to {currentPort}. Bridge server restarted.", "OK");
                 }
                 else
                 {
-                    EditorUtility.DisplayDialog("MCP Bridge Settings", "Port is already set to this value.", "OK");
+                    EditorUtility.DisplayDialog("MCP Bridge Settings", 
+                        "Port is already set to this value.", "OK");
                 }
             }
 
